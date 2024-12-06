@@ -1,8 +1,9 @@
 #include <mpi.h>
 #include <iostream>
-#include <fstream>
-#include <cstdlib>
 #include <vector>
+#include <cstdlib>
+#include <ctime>
+#include <limits>
 #include <chrono>
 
 int main(int argc, char** argv) {
@@ -12,7 +13,7 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // Массив размеров векторов для тестирования
+    // Различные размеры векторов
     std::vector<int> vector_sizes = { 1000, 10000, 100000, 1000000, 10000000 };
 
     if (rank == 0) {
@@ -21,41 +22,49 @@ int main(int argc, char** argv) {
         std::cout << "-------------------------------------------------------------------------------------------\n";
     }
 
-    // Размерность вектора и генерация случайных данных
     for (int VECTOR_SIZE : vector_sizes) {
-        std::vector<int> data(VECTOR_SIZE);
-        srand(rank + 1);
-        for (int i = 0; i < VECTOR_SIZE; ++i) {
-            data[i] = rand();
-        }
+        std::vector<int> data;
 
-        // Нахождение локального минимума
-        int local_min = data[0];
-        for (int i = 1; i < VECTOR_SIZE; ++i) {
-            if (data[i] < local_min) {
-                local_min = data[i];
-            }
-        }
-
-        // Нахождение глобального минимума
-        int global_min;
-        auto start = std::chrono::high_resolution_clock::now();
-        MPI_Reduce(&local_min, &global_min, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> elapsed = end - start;
-
-        // Запись результатов
         if (rank == 0) {
-            std::ofstream output_file("task1_output.txt", std::ios::app);
-            if (output_file.is_open()) {
-                output_file << global_min << ";" << VECTOR_SIZE << ";" << elapsed.count() << "\n";
-                output_file.close();
+            // Инициализация случайного вектора на процессе с рангом 0
+            data.resize(VECTOR_SIZE);
+            std::srand(static_cast<unsigned>(std::time(0)));
+            for (int i = 0; i < VECTOR_SIZE; ++i) {
+                data[i] = std::rand() % 10000; // Значения от 0 до 9999
             }
-            else {
-                std::cerr << "Не удалось открыть файл для записи\n";
-            }
+        }
+
+        // Вычисление размера блока для каждого процесса
+        int block_size = VECTOR_SIZE / size;
+        std::vector<int> local_data(block_size);
+
+        // Распределение данных вектора между процессами
+        MPI_Scatter(data.data(), block_size, MPI_INT, local_data.data(), block_size, MPI_INT, 0, MPI_COMM_WORLD);
+
+        // Локальный минимум и максимум
+        int local_min = std::numeric_limits<int>::max();
+        int local_max = std::numeric_limits<int>::min();
+        for (int value : local_data) {
+            if (value < local_min) local_min = value;
+            if (value > local_max) local_max = value;
+        }
+
+        // Глобальный минимум и максимум
+        int global_min, global_max;
+        double start_time = MPI_Wtime();
+        MPI_Reduce(&local_min, &global_min, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&local_max, &global_max, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
+        double end_time = MPI_Wtime();
+        double elapsed_time = end_time - start_time;
+
+        // Результаты на процессе 0
+        if (rank == 0) {
+            std::cout << global_min << "/" << global_max << ";"
+                << VECTOR_SIZE << ";"
+                << elapsed_time << "\n";
         }
     }
+
     MPI_Finalize();
     return 0;
 }
